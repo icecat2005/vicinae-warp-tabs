@@ -1,0 +1,93 @@
+{
+  "$schema": "https://raw.githubusercontent.com/vicinaehq/vicinae/refs/heads/main/extra/schemas/extension.json",
+  "name": "warp-tabs",
+  "title": "Warp Tabs",
+  "description": "List open Warp tabs and jump back to the selected tab.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/icecat2005/vicinae-warp-tabs.git"
+  },
+  "homepage": "https://github.com/icecat2005/vicinae-warp-tabs#readme",
+  "bugs": {
+    "url": "https://github.com/icecat2005/vicinae-warp-tabs/issues"
+  },
+  "keywords": ["vicinae", "warp", "tabs", "terminal"],
+  "categories": ["Developer Tools", "Productivity"],
+  "license": "MIT",
+  "author": "Emma",
+  "icon": "extension-icon.svg",
+  "version": "0.1.0",
+  "commands": [
+    {
+      "name": "warp-tabs",
+      "title": "Warp Tabs",
+      "description": "Show current Warp tabs.",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "warpStatePath",
+      "title": "Warp State Directory",
+      "description": "Directory containing warp.sqlite.",
+      "type": "textfield",
+      "required": false,
+      "default": "~/.local/state/warp-terminal"
+    },
+    {
+      "name": "keySender",
+      "title": "Key Sender",
+      "description": "Tool used to send Warp tab shortcuts after focusing Warp.",
+      "type": "dropdown",
+      "required": false,
+      "default": "auto",
+      "data": [
+        {
+          "title": "Auto",
+          "value": "auto"
+        },
+        {
+          "title": "wtype",
+          "value": "wtype"
+        },
+        {
+          "title": "ydotool",
+          "value": "ydotool"
+        },
+        {
+          "title": "xdotool",
+          "value": "xdotool"
+        },
+        {
+          "title": "None",
+          "value": "none"
+        }
+      ]
+    },
+    {
+      "name": "focusDelayMs",
+      "title": "Focus Delay",
+      "description": "Milliseconds to wait after focusing Warp before sending the tab shortcut.",
+      "type": "textfield",
+      "required": false,
+      "default": "200"
+    }
+  ],
+  "scripts": {
+    "build": "vici build",
+    "doctor": "node scripts/check-dependencies.mjs",
+    "doctor:strict": "node scripts/check-dependencies.mjs --strict",
+    "dev": "vici develop",
+    "lint": "tsc --noEmit",
+    "postinstall": "node scripts/check-dependencies.mjs --postinstall",
+    "setup:system": "bash scripts/install-system-deps.sh"
+  },
+  "dependencies": {
+    "@vicinae/api": "^0.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.9.2"
+  }
+}
