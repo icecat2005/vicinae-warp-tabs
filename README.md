@@ -5,8 +5,10 @@ Vicinae extension for listing the currently open Warp tabs and switching back to
 ## What It Does
 
 - Reads open Warp tab metadata from `~/.local/state/warp-terminal/warp.sqlite`.
-- Shows tab title, working directory, window id, tab index, active marker, and details.
+- Shows tab title, git repo and branch when available, abbreviated working directory, window id, tab index, active marker, agent marker, and details.
+- Highlights Claude Code sessions with a Claude-colored tab icon, compact status marker, and session duration when Warp recorded timing.
 - Switches to tabs 1-8 or the last tab using Warp's `Ctrl+1` through `Ctrl+8` / `Ctrl+9` shortcuts.
+- Closes tabs through an explicit confirmed action, available from the action panel or the Delete key.
 - Keeps duplicate-tab creation as a separate explicit action.
 - Never opens a duplicate tab when the switch action cannot run.
 - Never launches Warp from the primary switch action; it only tries to focus an existing GNOME Warp window, then sends the shortcut.
@@ -45,11 +47,19 @@ For the current Fedora GNOME Wayland setup:
 npm run setup:system
 ```
 
+If `npm run doctor` reports that `ydotool socket` is missing, rerun only the service setup and verification:
+
+```bash
+npm run doctor:fix -- --skip-install
+```
+
+Use `npm run doctor:fix` for the full install-and-enable path. The script installs `python3` and `ydotool`, enables either `ydotool.service` or `ydotoold.service`, verifies socket access, then runs `npm run doctor`.
+
 Equivalent manual commands:
 
 ```bash
 sudo dnf -y install ydotool
-sudo systemctl enable --now ydotool.service
+sudo systemctl enable --now ydotool.service || sudo systemctl enable --now ydotoold.service
 ```
 
 If `ydotool` is installed but switching still fails, check the daemon socket:

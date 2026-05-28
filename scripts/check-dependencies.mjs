@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -34,28 +34,43 @@ function installCommand() {
   const id = `${osRelease.ID || ""} ${osRelease.ID_LIKE || ""}`.toLowerCase();
 
   if (id.includes("fedora") || id.includes("rhel")) {
-    return "sudo dnf -y install ydotool && sudo systemctl enable --now ydotool.service";
+    return "npm run setup:system";
   }
 
   if (id.includes("debian") || id.includes("ubuntu")) {
-    return "sudo apt-get update && sudo apt-get install -y ydotool && sudo systemctl enable --now ydotool.service";
+    return "npm run setup:system";
   }
 
   if (id.includes("arch")) {
-    return "sudo pacman -S --needed ydotool && sudo systemctl enable --now ydotool.service";
+    return "npm run setup:system -- --yes";
   }
 
-  return "Install ydotool with your system package manager, then enable and start ydotool.service.";
+  return "Install python3 and ydotool with your system package manager, then enable ydotool.service or ydotoold.service.";
 }
 
-function ydotoolSocketPath() {
+function canAccessSocket(candidate) {
+  try {
+    accessSync(candidate, constants.R_OK | constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ydotoolSocketInfo() {
   const candidates = [
     process.env.YDOTOOL_SOCKET,
     "/run/ydotool/socket",
     process.env.XDG_RUNTIME_DIR ? path.join(process.env.XDG_RUNTIME_DIR, ".ydotool_socket") : undefined,
+    "/tmp/.ydotool_socket",
   ].filter(Boolean);
 
-  return candidates.find((candidate) => existsSync(candidate));
+  const existing = candidates.find((candidate) => existsSync(candidate));
+  if (!existing) return undefined;
+  return {
+    path: existing,
+    accessible: canAccessSocket(existing),
+  };
 }
 
 function warpDatabasePath() {
@@ -66,8 +81,8 @@ const hasPython = commandExists("python3");
 const availableKeySenders = keySenders.filter(commandExists);
 const dbPath = warpDatabasePath();
 const hasWarpDatabase = existsSync(dbPath);
-const ydotoolSocket = ydotoolSocketPath();
-const readyKeySenders = availableKeySenders.filter((sender) => sender !== "ydotool" || ydotoolSocket);
+const ydotoolSocket = ydotoolSocketInfo();
+const readyKeySenders = availableKeySenders.filter((sender) => sender !== "ydotool" || ydotoolSocket?.accessible);
 const hasKeySender = availableKeySenders.length > 0;
 const hasReadyKeySender = readyKeySenders.length > 0;
 
@@ -79,7 +94,11 @@ const lines = [
 ];
 
 if (availableKeySenders.includes("ydotool")) {
-  lines.push(`ydotool socket: ${ydotoolSocket || "not found"}`);
+  lines.push(
+    `ydotool socket: ${
+      ydotoolSocket ? `${ydotoolSocket.path}${ydotoolSocket.accessible ? "" : " (not accessible)"}` : "not found"
+    }`,
+  );
 }
 
 if (!hasKeySender) {
@@ -91,8 +110,13 @@ if (!hasKeySender) {
 
 if (hasKeySender && !hasReadyKeySender) {
   lines.push("");
-  lines.push("ydotool is installed, but its daemon socket was not found.");
-  lines.push("Start the daemon with: sudo systemctl enable --now ydotool.service");
+  if (ydotoolSocket && !ydotoolSocket.accessible) {
+    lines.push("ydotool is installed and its daemon socket exists, but this user cannot read and write it.");
+    lines.push(`Inspect permissions with: ls -l ${ydotoolSocket.path}`);
+  } else {
+    lines.push("ydotool is installed, but its daemon socket was not found.");
+    lines.push("Start the daemon with: npm run doctor:fix -- --skip-install");
+  }
 }
 
 if (!hasPython) {

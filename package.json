@@ -76,6 +76,7 @@
   "scripts": {
     "build": "vici build",
     "doctor": "node scripts/check-dependencies.mjs",
+    "doctor:fix": "bash scripts/install-system-deps.sh",
     "doctor:strict": "node scripts/check-dependencies.mjs --strict",
     "dev": "vici develop",
     "lint": "tsc --noEmit",
