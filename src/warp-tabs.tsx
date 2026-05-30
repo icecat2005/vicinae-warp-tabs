@@ -19,11 +19,12 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const execFileAsync = promisify(execFile);
 const WARP_DESKTOP_ID = "dev.warp.Warp.desktop";
 const CLAUDE_COLOR = "#E08A5A";
+const INTERACTION_REFRESH_INTERVAL_MS = 1000;
 
 type KeySender = "auto" | "wtype" | "ydotool" | "xdotool" | "none";
 
@@ -264,7 +265,7 @@ import sys
 con = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
 con.row_factory = sqlite3.Row
 ANSI_RE = re.compile(r"\\x1b\\[[0-9;?]*[ -/]*[@-~]")
-CLAUDE_RE = re.compile(r"^(?:\\S+/)?claude(?:\\s|$)")
+CLAUDE_RE = re.compile(r"^(?:\\S+/)?claude(?:[-\\s]|$)")
 
 def plain_command(value):
     if value is None:
@@ -384,6 +385,7 @@ SELECT
   pl.is_focused,
   tp.id AS pane_id,
   hex(tp.uuid) AS uuid_hex,
+  tp.cwd,
   tp.conversation_ids,
   tp.active_conversation_id
 FROM pane_nodes pn
@@ -422,6 +424,18 @@ SELECT
 FROM agent_conversations
 """).fetchall()
 
+running_command_rows = con.execute("""
+SELECT
+  id,
+  command,
+  start_ts,
+  completed_ts,
+  pwd
+FROM commands
+WHERE completed_ts IS NULL
+ORDER BY id DESC
+""").fetchall()
+
 panes_by_tab_id = {}
 for row in pane_rows:
     panes_by_tab_id.setdefault(row["tab_id"], []).append(dict(row))
@@ -437,6 +451,17 @@ conversation_models = {
     for row in conversation_model_rows
     if row["conversation_id"]
 }
+
+running_claude_commands_by_pwd = {}
+for row in running_command_rows:
+    command = plain_command(row["command"])
+    pwd = row["pwd"]
+    if pwd and is_claude_command(command):
+        running_claude_commands_by_pwd.setdefault(pwd, []).append({
+            "command": command,
+            "start_ts": row["start_ts"],
+            "completed_ts": row["completed_ts"],
+        })
 
 def empty_agent_fields():
     return {
@@ -462,12 +487,28 @@ def agent_summary(tab, panes):
         if active_conversation_id:
             extend_unique(conversation_ids, [active_conversation_id])
 
+        cwd = pane.get("cwd")
+        running_claude_commands = running_claude_commands_by_pwd.get(cwd) if cwd else None
+        if running_claude_commands:
+            command = running_claude_commands[0]
+            candidates.append({
+                "agent_label": "Claude Code",
+                "agent_status": "running",
+                "agent_started_at": command.get("start_ts"),
+                "agent_completed_at": command.get("completed_ts"),
+                "agent_command": command.get("command"),
+                "agent_pending_count": len(pending_ids),
+                "agent_conversation_count": len(conversation_ids),
+                "_priority": 40,
+            })
+            continue
+
         if block:
             pending_from_block, conversations_from_block = visibility_ids(block.get("agent_view_visibility"))
             extend_unique(pending_ids, pending_from_block)
             extend_unique(conversation_ids, conversations_from_block)
 
-            if is_claude_command(block.get("command")):
+            if is_claude_command(block.get("command")) and block.get("exit_code") != 148:
                 status = "running" if block.get("completed_ts") is None else ("done" if is_active_tab else "unread")
                 if status != "running" and pending_ids:
                     status = "unread"
@@ -972,7 +1013,7 @@ function TabActions({
       <Action
         title="Close Tab"
         icon={Icon.Trash}
-        shortcut={{ modifiers: [], key: "deleteForward" }}
+        shortcut={{ modifiers: ["ctrl"], key: "d" }}
         style={Action.Style.Destructive}
         onAction={() => onClose(tab)}
       />
@@ -995,24 +1036,56 @@ export default function Command() {
   const [showingDetail, setShowingDetail] = useState(false);
   const [now, setNow] = useState(Date.now());
 
-  const reload = useCallback(async () => {
-    setIsLoading(true);
-    setError(undefined);
-    try {
-      setNow(Date.now());
-      setTabs(await loadWarpTabs(preferences));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-      setTabs([]);
-      await showToast({ style: Toast.Style.Failure, title: "Could not load Warp tabs", message });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [preferences]);
+  const reloadInFlightRef = useRef(false);
+  const lastInteractionRefreshAtRef = useRef(0);
+
+  const reload = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (reloadInFlightRef.current) return;
+
+      reloadInFlightRef.current = true;
+      setIsLoading(true);
+      if (!silent) {
+        setError(undefined);
+      }
+      try {
+        setNow(Date.now());
+        setTabs(await loadWarpTabs(preferences));
+        if (silent) {
+          setError(undefined);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        setTabs([]);
+        if (!silent) {
+          await showToast({ style: Toast.Style.Failure, title: "Could not load Warp tabs", message });
+        }
+      } finally {
+        setIsLoading(false);
+        reloadInFlightRef.current = false;
+      }
+    },
+    [preferences],
+  );
+
+  const forceReload = useCallback(() => {
+    void reload();
+  }, [reload]);
+
+  const refreshFromInteraction = useCallback(() => {
+    const nowMs = Date.now();
+    if (nowMs - lastInteractionRefreshAtRef.current < INTERACTION_REFRESH_INTERVAL_MS) return;
+    lastInteractionRefreshAtRef.current = nowMs;
+    void reload({ silent: true });
+  }, [reload]);
+
+  const handleSelectionChange = useCallback(() => {
+    refreshFromInteraction();
+  }, [refreshFromInteraction]);
 
   useEffect(() => {
-    reload();
+    void reload();
   }, [reload]);
 
   useEffect(() => {
@@ -1050,7 +1123,7 @@ export default function Command() {
           icon={Icon.ExclamationMark}
           actions={
             <ActionPanel>
-              <Action title="Reload" icon={Icon.ArrowClockwise} onAction={reload} />
+              <Action title="Reload" icon={Icon.ArrowClockwise} onAction={forceReload} />
             </ActionPanel>
           }
         />
@@ -1063,6 +1136,7 @@ export default function Command() {
       isLoading={isLoading}
       isShowingDetail={showingDetail}
       searchBarPlaceholder="Search Warp tabs..."
+      onSelectionChange={handleSelectionChange}
       actions={
         <ActionPanel>
           <Action
@@ -1070,7 +1144,7 @@ export default function Command() {
             icon={showingDetail ? Icon.EyeDisabled : Icon.Eye}
             onAction={() => setShowingDetail((value) => !value)}
           />
-          <Action title="Reload" icon={Icon.ArrowClockwise} onAction={reload} />
+          <Action title="Reload" icon={Icon.ArrowClockwise} onAction={forceReload} />
         </ActionPanel>
       }
     >
@@ -1080,6 +1154,7 @@ export default function Command() {
       <List.Section title={`${tabs.length} Tabs`}>
         {tabs.map((tab) => (
           <List.Item
+            id={`${tab.windowId}-${tab.id}`}
             key={`${tab.windowId}-${tab.id}`}
             title={tab.title}
             subtitle={tabSubtitle(tab)}
@@ -1097,7 +1172,7 @@ export default function Command() {
             ]}
             accessories={showingDetail ? [] : tabAccessories(tab, now)}
             detail={<List.Item.Detail markdown={detailMarkdown(tab, now)} />}
-            actions={<TabActions tab={tab} onSwitch={handleSwitch} onClose={handleClose} onReload={reload} />}
+            actions={<TabActions tab={tab} onSwitch={handleSwitch} onClose={handleClose} onReload={forceReload} />}
           />
         ))}
       </List.Section>
