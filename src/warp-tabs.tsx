@@ -19,11 +19,12 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const execFileAsync = promisify(execFile);
 const WARP_DESKTOP_ID = "dev.warp.Warp.desktop";
 const CLAUDE_COLOR = "#E08A5A";
+const INTERACTION_REFRESH_INTERVAL_MS = 1000;
 
 type KeySender = "auto" | "wtype" | "ydotool" | "xdotool" | "none";
 
@@ -972,7 +973,7 @@ function TabActions({
       <Action
         title="Close Tab"
         icon={Icon.Trash}
-        shortcut={{ modifiers: [], key: "deleteForward" }}
+        shortcut={{ modifiers: ["ctrl"], key: "d" }}
         style={Action.Style.Destructive}
         onAction={() => onClose(tab)}
       />
@@ -995,24 +996,56 @@ export default function Command() {
   const [showingDetail, setShowingDetail] = useState(false);
   const [now, setNow] = useState(Date.now());
 
-  const reload = useCallback(async () => {
-    setIsLoading(true);
-    setError(undefined);
-    try {
-      setNow(Date.now());
-      setTabs(await loadWarpTabs(preferences));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-      setTabs([]);
-      await showToast({ style: Toast.Style.Failure, title: "Could not load Warp tabs", message });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [preferences]);
+  const reloadInFlightRef = useRef(false);
+  const lastInteractionRefreshAtRef = useRef(0);
+
+  const reload = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (reloadInFlightRef.current) return;
+
+      reloadInFlightRef.current = true;
+      setIsLoading(true);
+      if (!silent) {
+        setError(undefined);
+      }
+      try {
+        setNow(Date.now());
+        setTabs(await loadWarpTabs(preferences));
+        if (silent) {
+          setError(undefined);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        setTabs([]);
+        if (!silent) {
+          await showToast({ style: Toast.Style.Failure, title: "Could not load Warp tabs", message });
+        }
+      } finally {
+        setIsLoading(false);
+        reloadInFlightRef.current = false;
+      }
+    },
+    [preferences],
+  );
+
+  const forceReload = useCallback(() => {
+    void reload();
+  }, [reload]);
+
+  const refreshFromInteraction = useCallback(() => {
+    const nowMs = Date.now();
+    if (nowMs - lastInteractionRefreshAtRef.current < INTERACTION_REFRESH_INTERVAL_MS) return;
+    lastInteractionRefreshAtRef.current = nowMs;
+    void reload({ silent: true });
+  }, [reload]);
+
+  const handleSelectionChange = useCallback(() => {
+    refreshFromInteraction();
+  }, [refreshFromInteraction]);
 
   useEffect(() => {
-    reload();
+    void reload();
   }, [reload]);
 
   useEffect(() => {
@@ -1050,7 +1083,7 @@ export default function Command() {
           icon={Icon.ExclamationMark}
           actions={
             <ActionPanel>
-              <Action title="Reload" icon={Icon.ArrowClockwise} onAction={reload} />
+              <Action title="Reload" icon={Icon.ArrowClockwise} onAction={forceReload} />
             </ActionPanel>
           }
         />
@@ -1063,6 +1096,7 @@ export default function Command() {
       isLoading={isLoading}
       isShowingDetail={showingDetail}
       searchBarPlaceholder="Search Warp tabs..."
+      onSelectionChange={handleSelectionChange}
       actions={
         <ActionPanel>
           <Action
@@ -1070,7 +1104,7 @@ export default function Command() {
             icon={showingDetail ? Icon.EyeDisabled : Icon.Eye}
             onAction={() => setShowingDetail((value) => !value)}
           />
-          <Action title="Reload" icon={Icon.ArrowClockwise} onAction={reload} />
+          <Action title="Reload" icon={Icon.ArrowClockwise} onAction={forceReload} />
         </ActionPanel>
       }
     >
@@ -1080,6 +1114,7 @@ export default function Command() {
       <List.Section title={`${tabs.length} Tabs`}>
         {tabs.map((tab) => (
           <List.Item
+            id={`${tab.windowId}-${tab.id}`}
             key={`${tab.windowId}-${tab.id}`}
             title={tab.title}
             subtitle={tabSubtitle(tab)}
@@ -1097,7 +1132,7 @@ export default function Command() {
             ]}
             accessories={showingDetail ? [] : tabAccessories(tab, now)}
             detail={<List.Item.Detail markdown={detailMarkdown(tab, now)} />}
-            actions={<TabActions tab={tab} onSwitch={handleSwitch} onClose={handleClose} onReload={reload} />}
+            actions={<TabActions tab={tab} onSwitch={handleSwitch} onClose={handleClose} onReload={forceReload} />}
           />
         ))}
       </List.Section>

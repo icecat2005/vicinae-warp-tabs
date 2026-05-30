@@ -79,6 +79,7 @@
     "doctor:fix": "bash scripts/install-system-deps.sh",
     "doctor:strict": "node scripts/check-dependencies.mjs --strict",
     "dev": "vici develop",
+    "test": "node --test tests/*.test.cjs",
     "lint": "tsc --noEmit",
     "postinstall": "node scripts/check-dependencies.mjs --postinstall",
     "setup:system": "bash scripts/install-system-deps.sh"
